@@ -9,7 +9,15 @@ def train_model(model, train_loader, epochs=10, learning_rate=0.001):
     model.to(device)
 
     criterion = nn.CrossEntropyLoss()
+
+    # 1. Сначала создаем обычный оптимизатор с нашим числовым learning_rate
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+
+    # 2. Создаем планировщик (Scheduler) и "подключаем" к нему оптимизатор
+    # mode='min' - реагируем на падение Loss
+    # factor=0.5 - уменьшаем шаг в 2 раза, если нет прогресса
+    # patience=3 - ждем 3 эпохи стагнации перед уменьшением
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=3)
 
     # Список для хранения среднего Loss каждой эпохи
     loss_history = []
@@ -33,6 +41,12 @@ def train_model(model, train_loader, epochs=10, learning_rate=0.001):
 
         epoch_loss = running_loss / batch_count
         loss_history.append(epoch_loss)
-        print(f"Эпоха [{epoch + 1}/{epochs}] - Средний Loss: {epoch_loss:.4f}")
 
-    return model, loss_history  # Возвращаем и модель, и историю
+        # 3. Делаем шаг планировщика, передавая ему текущий Loss
+        scheduler.step(epoch_loss)
+
+        # Получаем текущий шаг обучения, чтобы вывести его на экран (для наглядности)
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"Эпоха [{epoch + 1}/{epochs}] - Средний Loss: {epoch_loss:.4f} | Шаг (LR): {current_lr}")
+
+    return model, loss_history

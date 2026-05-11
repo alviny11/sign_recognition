@@ -46,7 +46,8 @@ if __name__ == '__main__':
     # Просто укажи путь к картинке, которую хочешь проверить
     # Убедись, что файл 'test_image.jpg' лежит в папке проекта
     try:
-        result = predict('test_image.jpg')
-        print(f"🤖 Нейросеть считает, что это знак: {result}")
+        for i in range(1, 5):
+            result = predict(f'test_{i}.png')
+            print(f"Нейросеть считает, что это знак: {result}")
     except FileNotFoundError:
-        print("❌ Файл test_image.jpg не найден. Положи его в папку с проектом!")
+        print("Файл не найден. Положи его в папку с проектом!")

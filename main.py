@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from torch.utils.data import DataLoader, random_split
+from torch.utils.data import DataLoader, random_split, Dataset
 from torchvision import transforms
 import os
 import json
@@ -12,17 +12,33 @@ from src.model import TrafficSignNet
 from src.train import train_model
 
 
+class ApplyTransform(Dataset):
+    """Класс-обертка для применения разных трансформаций к Subset после random_split"""
+
+    def __init__(self, subset, transform=None):
+        self.subset = subset
+        self.transform = transform
+
+    def __getitem__(self, idx):
+        image, label = self.subset[idx]
+        if self.transform:
+            image = self.transform(image)
+        return image, label
+
+    def __len__(self):
+        return len(self.subset)
+
+
 def main():
     # --- 1. Настройки ---
     BATCH_SIZE = 32
-    EPOCHS = 25  # Увеличим до 15, чтобы график был нагляднее
+    EPOCHS = 25
     LEARNING_RATE = 0.001
 
     IMG_DIR = 'data/images'
     ANNOT_DIR = 'data/annotations'
     WEIGHTS_DIR = 'weights'
 
-    # Создаем папку для весов, если её нет
     if not os.path.exists(WEIGHTS_DIR):
         os.makedirs(WEIGHTS_DIR)
 
@@ -32,20 +48,32 @@ def main():
     print(f"🚀 Используемое устройство: {device}")
 
     # --- 3. Подготовка данных ---
-    transform = transforms.Compose([
+
+    # Аугментация для тренировки: вращение, изменение яркости и смещение
+    train_transform = transforms.Compose([
+        transforms.Resize((32, 32)),
+        transforms.RandomRotation(15),
+        transforms.ColorJitter(brightness=0.2, contrast=0.2),
+        transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
+        transforms.ToTensor(),
+        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+    ])
+
+    # Чистая трансформация для валидации
+    val_transform = transforms.Compose([
         transforms.Resize((32, 32)),
         transforms.ToTensor(),
         transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
     ])
 
     print("📦 Загрузка датасета...")
-    full_dataset = TrafficSignDataset(IMG_DIR, ANNOT_DIR, transform=transform)
+    # Загружаем данные без первичной трансформации, чтобы применить разные позже
+    full_dataset = TrafficSignDataset(IMG_DIR, ANNOT_DIR, transform=None)
 
     if len(full_dataset) == 0:
         print("❌ Ошибка: Данные не найдены. Проверь пути к изображениям и XML.")
         return
 
-    # Сохраняем словарь классов для predict.py
     with open(os.path.join(WEIGHTS_DIR, 'classes.json'), 'w') as f:
         json.dump(full_dataset.label_map, f)
 
@@ -54,8 +82,12 @@ def main():
     val_size = len(full_dataset) - train_size
     train_subset, val_subset = random_split(full_dataset, [train_size, val_size])
 
-    train_loader = DataLoader(train_subset, batch_size=BATCH_SIZE, shuffle=True)
-    val_loader = DataLoader(val_subset, batch_size=BATCH_SIZE, shuffle=False)
+    # Оборачиваем подвыборки в трансформы
+    train_dataset = ApplyTransform(train_subset, transform=train_transform)
+    val_dataset = ApplyTransform(val_subset, transform=val_transform)
+
+    train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, shuffle=False)
 
     num_classes = len(full_dataset.label_map)
     print(f"✅ Найдено классов: {num_classes}")
@@ -66,7 +98,6 @@ def main():
 
     # --- 5. Обучение ---
     print("\n--- Старт обучения ---")
-    # Обновленная функция train_model теперь должна возвращать историю потерь
     trained_model, loss_history = train_model(
         model=model,
         train_loader=train_loader,
@@ -74,13 +105,30 @@ def main():
         learning_rate=LEARNING_RATE
     )
 
-    # --- 6. Сохранение и Визуализация ---
-    # Сохраняем веса
+    # --- 6. Оценка модели (Скор / Accuracy) ---
+    print("\n--- Оценка на валидационной выборке ---")
+    trained_model.eval()
+
+    correct_predictions = 0
+    total_samples = 0
+
+    with torch.no_grad():
+        for images, labels in val_loader:
+            images, labels = images.to(device), labels.to(device)
+            outputs = trained_model(images)
+            _, predicted = torch.max(outputs, 1)
+
+            total_samples += labels.size(0)
+            correct_predictions += (predicted == labels).sum().item()
+
+    accuracy = (correct_predictions / total_samples) * 100
+    print(f"🏆 Итоговый скор (Accuracy): {accuracy:.2f}% ({correct_predictions} из {total_samples})")
+
+    # --- 7. Сохранение и Визуализация ---
     model_path = os.path.join(WEIGHTS_DIR, 'traffic_sign_model.pth')
     torch.save(trained_model.state_dict(), model_path)
     print(f"\n✅ Модель сохранена в {model_path}")
 
-    # Строим график потерь (Loss)
     plt.figure(figsize=(10, 6))
     plt.plot(range(1, EPOCHS + 1), loss_history, marker='o', linestyle='-', color='royalblue', label='Training Loss')
     plt.title('История обучения (Loss Curve)')
@@ -92,8 +140,7 @@ def main():
     graph_path = os.path.join(WEIGHTS_DIR, 'loss_plot.png')
     plt.savefig(graph_path)
     print(f"📊 График сохранен: {graph_path}")
-
-    plt.show()  # Откроет окно с графиком
+    plt.show()
 
 
 if __name__ == '__main__':
