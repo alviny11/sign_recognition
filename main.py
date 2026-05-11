@@ -10,7 +10,7 @@ import matplotlib.pyplot as plt
 from src.dataset import TrafficSignDataset
 from src.model import TrafficSignNet
 from src.train import train_model
-
+import torchvision.models as models
 
 class ApplyTransform(Dataset):
     """Класс-обертка для применения разных трансформаций к Subset после random_split"""
@@ -32,7 +32,7 @@ class ApplyTransform(Dataset):
 def main():
     # --- 1. Настройки ---
     BATCH_SIZE = 32
-    EPOCHS = 25
+    EPOCHS = 50
     LEARNING_RATE = 0.001
 
     IMG_DIR = 'data/images'
@@ -49,21 +49,22 @@ def main():
 
     # --- 3. Подготовка данных ---
 
-    # Аугментация для тренировки: вращение, изменение яркости и смещение
+    # Аугментация для тренировки
     train_transform = transforms.Compose([
-        transforms.Resize((32, 32)),
+        transforms.Resize((224, 224)),  # Возвращаем оригинальный размер для ResNet
         transforms.RandomRotation(15),
         transforms.ColorJitter(brightness=0.2, contrast=0.2),
         transforms.RandomAffine(degrees=0, translate=(0.1, 0.1)),
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        # Используем константы нормализации ImageNet
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     # Чистая трансформация для валидации
     val_transform = transforms.Compose([
-        transforms.Resize((32, 32)),
+        transforms.Resize((224, 224)),  # Возвращаем оригинальный размер
         transforms.ToTensor(),
-        transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5))
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
     print("📦 Загрузка датасета...")
@@ -94,13 +95,17 @@ def main():
     print(f"✅ Всего фото: {len(full_dataset)} (Train: {train_size}, Val: {val_size})")
 
     # --- 4. Инициализация модели ---
-    model = TrafficSignNet(num_classes=num_classes).to(device)
+    model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+    num_ftrs = model.fc.in_features
+    model.fc = nn.Linear(num_ftrs, num_classes)
 
+    model = model.to(device)
     # --- 5. Обучение ---
     print("\n--- Старт обучения ---")
     trained_model, loss_history = train_model(
         model=model,
         train_loader=train_loader,
+        val_loader=val_loader,  # ДОБАВИЛИ ЭТУ СТРОЧКУ
         epochs=EPOCHS,
         learning_rate=LEARNING_RATE
     )
